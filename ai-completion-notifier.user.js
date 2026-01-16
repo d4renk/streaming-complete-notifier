@@ -126,7 +126,6 @@
     // ===========================================
 
     // 状态存储
-    const requestState = new Map();
     const lastNotifyAt = new Map();
     const lastStartAt = new Map();
 
@@ -346,15 +345,10 @@
 
         if (platform) {
             debugLog(`✅ XHR 匹配到平台: ${platform.name}, 检测类型: ${platform.detection.type}`);
-            const requestId = Math.random().toString(36);
 
             if (platform.detection.type === 'sse-stream') {
                 // SSE 流检测
                 debugLog('注册 SSE 流监听器');
-                requestState.set(requestId, {
-                    platformId: platform.id,
-                    startTime: Date.now()
-                });
 
                 if (platform.detection.trackStart) {
                     const key = stateKey(platform.id);
@@ -376,7 +370,6 @@
                         } else {
                             debugWarn('不是 SSE 流,跳过通知');
                         }
-                        requestState.delete(requestId);
                     }
                 });
             } else if (platform.detection.type === 'request-complete') {
@@ -442,18 +435,14 @@
         const isSSE = contentType.includes('text/event-stream');
 
         if (isConversationAPI && isSSE && response.body) {
-            // 克隆流以便解析
-            const [originalStream, tapStream] = response.body.tee();
+            // 克隆整个响应对象以保留所有属性
+            const clonedResponse = response.clone();
 
-            // 异步解析 SSE 流事件
-            parseSSEStream(tapStream, url);
+            // 异步解析克隆的 SSE 流事件
+            parseSSEStream(clonedResponse.body, url);
 
-            // 返回原始流
-            return new Response(originalStream, {
-                headers: response.headers,
-                status: response.status,
-                statusText: response.statusText
-            });
+            // 返回原始响应对象（保留所有只读属性）
+            return response;
         }
 
         // 常规平台检测
@@ -475,13 +464,25 @@
 
                 // 克隆响应以监听流结束
                 const clone = response.clone();
-                clone.body.getReader().read().then(function processStream({ done }) {
-                    if (done) {
-                        if (!isThrottled(platform.id, platform.throttleMs)) {
-                            sendNotification(platform);
+                const reader = clone.body.getReader();
+
+                // 循环读取直到流结束
+                (async function processStream() {
+                    try {
+                        while (true) {
+                            const { done } = await reader.read();
+                            if (done) {
+                                debugLog(`✅ SSE 流结束 - 平台: ${platform.name}`);
+                                if (!isThrottled(platform.id, platform.throttleMs)) {
+                                    sendNotification(platform);
+                                }
+                                break;
+                            }
                         }
+                    } catch (e) {
+                        debugError('SSE 流读取错误:', e);
                     }
-                }).catch(() => {});
+                })();
             }
         }
 
