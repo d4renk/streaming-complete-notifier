@@ -24,7 +24,7 @@
     // 调试模式配置
     // ===========================================
 
-    let DEBUG_MODE = false;  // 默认关闭,可通过菜单开启
+    let DEBUG_MODE = GM_getValue('debugMode', false);  // 从持久化存储读取,默认关闭
 
     function debugLog(...args) {
         if (DEBUG_MODE) {
@@ -309,6 +309,7 @@
                 };
             } else {
                 debugError('通知权限被拒绝,无法发送通知');
+                console.error('[AI-Notifier] 通知权限被拒绝。请在油猴脚本设置中允许通知权限。');
             }
         } catch (e) {
             debugError('发送通知失败:', e);
@@ -343,7 +344,7 @@
                     notification.close();
                 };
             } else if (Notification.permission === 'denied') {
-                alert('通知权限被拒绝，请在浏览器设置中允许通知权限');
+                alert('❌ 通知权限被拒绝\n\n请按以下步骤授权：\n\n1. 点击油猴图标\n2. 找到本脚本并点击\n3. 切换到「设置」标签\n4. 在「原始的连接匹配」下方找到通知权限\n5. 将通知权限设置为「允许」\n6. 刷新页面后重试');
                 return;
             }
         } catch (e) {
@@ -680,6 +681,7 @@
 
         GM_registerMenuCommand('🐛 调试模式 [' + (DEBUG_MODE ? '开' : '关') + ']', () => {
             DEBUG_MODE = !DEBUG_MODE;
+            GM_setValue('debugMode', DEBUG_MODE);  // 持久化保存调试模式状态
             alert('调试模式已' + (DEBUG_MODE ? '开启\n\n请打开浏览器控制台(F12)查看调试日志' : '关闭'));
             if (DEBUG_MODE) {
                 console.log('%c[AI-Notifier] 调试模式已开启', 'color: green; font-weight: bold; font-size: 14px');
