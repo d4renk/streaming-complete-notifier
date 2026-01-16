@@ -21,6 +21,30 @@
     'use strict';
 
     // ===========================================
+    // 调试模式配置
+    // ===========================================
+
+    let DEBUG_MODE = false;  // 默认关闭,可通过菜单开启
+
+    function debugLog(...args) {
+        if (DEBUG_MODE) {
+            console.log('[AI-Notifier-Debug]', new Date().toISOString(), ...args);
+        }
+    }
+
+    function debugWarn(...args) {
+        if (DEBUG_MODE) {
+            console.warn('[AI-Notifier-Debug]', new Date().toISOString(), ...args);
+        }
+    }
+
+    function debugError(...args) {
+        if (DEBUG_MODE) {
+            console.error('[AI-Notifier-Debug]', new Date().toISOString(), ...args);
+        }
+    }
+
+    // ===========================================
     // 第一部分:平台配置
     // ===========================================
 
@@ -128,8 +152,11 @@
         try {
             urlObj = new URL(url);
         } catch {
+            debugWarn('无效的 URL:', url);
             return null;
         }
+
+        debugLog('检查 URL:', url, '方法:', method, '过滤类型:', detectionTypeFilter);
 
         for (const platform of PLATFORMS) {
             if (detectionTypeFilter && platform.detection.type !== detectionTypeFilter) {
@@ -137,11 +164,13 @@
             }
 
             if (platform.match.method && method !== platform.match.method) {
+                debugLog(`平台 ${platform.name}: 方法不匹配 (需要 ${platform.match.method}, 实际 ${method})`);
                 continue;
             }
 
             if (platform.match.urlPattern) {
                 if (platform.match.urlPattern.test(url)) {
+                    debugLog(`✅ 匹配到平台: ${platform.name} (通过 urlPattern)`);
                     return platform;
                 }
                 continue;
@@ -153,15 +182,23 @@
                 }
                 return urlObj.hostname === host;
             });
-            if (!hostMatch) continue;
+
+            if (!hostMatch) {
+                debugLog(`平台 ${platform.name}: 域名不匹配 (需要 ${platform.hosts.join(', ')}, 实际 ${urlObj.hostname})`);
+                continue;
+            }
 
             if (platform.match.pathPattern) {
                 if (matchPath(urlObj.pathname, platform.match.pathPattern)) {
+                    debugLog(`✅ 匹配到平台: ${platform.name} (域名+路径)`);
                     return platform;
+                } else {
+                    debugLog(`平台 ${platform.name}: 路径不匹配 (模式: ${platform.match.pathPattern}, 实际: ${urlObj.pathname})`);
                 }
             }
         }
 
+        debugWarn('未匹配到任何平台');
         return null;
     }
 
@@ -200,9 +237,17 @@
         const key = stateKey(platformId) + suffix;
         const now = Date.now();
         const last = lastNotifyAt.get(key) || 0;
-        if (now - last < ms) return true;
-        lastNotifyAt.set(key, now);
-        return false;
+        const timeSinceLast = now - last;
+        const throttled = timeSinceLast < ms;
+
+        if (throttled) {
+            debugWarn(`节流中 - 平台: ${platformId}, 距离上次: ${timeSinceLast}ms, 需要: ${ms}ms`);
+        } else {
+            debugLog(`✅ 通过节流检查 - 平台: ${platformId}, 距离上次: ${timeSinceLast}ms`);
+            lastNotifyAt.set(key, now);
+        }
+
+        return throttled;
     }
 
     // ===========================================
@@ -224,17 +269,28 @@
 
     async function sendNotification(platform, options = {}) {
         try {
+            debugLog(`准备发送通知 - 平台: ${platform.name}`);
+
             const settings = getSetting(platform.enabledKey, true);
-            if (!settings) return;
+            debugLog(`平台 ${platform.name} 启用状态:`, settings);
+
+            if (!settings) {
+                debugWarn(`平台 ${platform.name} 已禁用,跳过通知`);
+                return;
+            }
 
             const { title, message } = platform.notify;
 
             // 请求通知权限
+            debugLog('检查通知权限:', Notification.permission);
             if (Notification.permission === 'default') {
+                debugLog('请求通知权限...');
                 await Notification.requestPermission();
+                debugLog('通知权限请求结果:', Notification.permission);
             }
 
             if (Notification.permission === 'granted') {
+                debugLog(`✅ 发送通知: ${title} - ${message}`);
                 const notification = new Notification(title, {
                     body: message,
                     icon: 'https://www.google.com/favicon.ico',
@@ -247,11 +303,15 @@
                 setTimeout(() => notification.close(), 8000);
 
                 notification.onclick = () => {
+                    debugLog('通知被点击');
                     window.focus();
                     notification.close();
                 };
+            } else {
+                debugError('通知权限被拒绝,无法发送通知');
             }
         } catch (e) {
+            debugError('发送通知失败:', e);
             console.error('[AI-Notifier] 发送通知失败:', e);
         }
     }
@@ -309,14 +369,18 @@
         const method = this._method;
         const url = this._url;
 
+        debugLog('XHR 请求:', method, url);
+
         // 检查是否匹配平台配置
         const platform = findPlatformForRequest(url, method);
 
         if (platform) {
+            debugLog(`✅ XHR 匹配到平台: ${platform.name}, 检测类型: ${platform.detection.type}`);
             const requestId = Math.random().toString(36);
 
             if (platform.detection.type === 'sse-stream') {
                 // SSE 流检测
+                debugLog('注册 SSE 流监听器');
                 requestState.set(requestId, {
                     platformId: platform.id,
                     startTime: Date.now()
@@ -325,24 +389,33 @@
                 if (platform.detection.trackStart) {
                     const key = stateKey(platform.id);
                     lastStartAt.set(key, Date.now());
+                    debugLog('记录流开始时间');
                 }
 
                 this.addEventListener('readystatechange', function() {
                     if (this.readyState === 4) {
+                        debugLog(`SSE 请求完成 - 状态: ${this.status}`);
                         const contentType = this.getResponseHeader('content-type') || '';
+                        debugLog('Content-Type:', contentType);
                         if (contentType.includes('text/event-stream')) {
+                            debugLog('✅ 确认为 SSE 流,准备发送通知');
                             // SSE 流结束
                             if (!isThrottled(platform.id, platform.throttleMs)) {
                                 sendNotification(platform);
                             }
+                        } else {
+                            debugWarn('不是 SSE 流,跳过通知');
                         }
                         requestState.delete(requestId);
                     }
                 });
             } else if (platform.detection.type === 'request-complete') {
                 // 普通请求完成检测
+                debugLog('注册普通请求完成监听器');
                 this.addEventListener('load', function() {
+                    debugLog(`请求完成 - 状态: ${this.status}`);
                     if (this.status >= 200 && this.status < 300) {
+                        debugLog('✅ 请求成功,准备发送通知');
                         if (!isThrottled(platform.id, platform.throttleMs)) {
                             sendNotification(platform);
                         }
@@ -354,16 +427,27 @@
         // 检查 followup 请求
         const followupPlatform = findPlatformForFollowup(url);
         if (followupPlatform) {
+            debugLog(`✅ 匹配到 followup 平台: ${followupPlatform.name}`);
             this.addEventListener('load', function() {
                 const key = stateKey(followupPlatform.id);
                 const startTime = lastStartAt.get(key);
                 const now = Date.now();
 
-                if (startTime && (now - startTime > followupPlatform.followup.minDelayMs)) {
-                    if (!isThrottled(followupPlatform.id, followupPlatform.throttleMs)) {
-                        sendNotification(followupPlatform);
+                if (startTime) {
+                    const elapsed = now - startTime;
+                    debugLog(`Followup 请求完成,距离开始: ${elapsed}ms, 最小延迟: ${followupPlatform.followup.minDelayMs}ms`);
+
+                    if (elapsed > followupPlatform.followup.minDelayMs) {
+                        debugLog('✅ 满足 followup 延迟条件,准备发送通知');
+                        if (!isThrottled(followupPlatform.id, followupPlatform.throttleMs)) {
+                            sendNotification(followupPlatform);
+                        }
+                        lastStartAt.delete(key);
+                    } else {
+                        debugWarn('未满足 followup 延迟条件,跳过通知');
                     }
-                    lastStartAt.delete(key);
+                } else {
+                    debugWarn('未找到开始时间,跳过 followup 通知');
                 }
             });
         }
@@ -374,12 +458,12 @@
     // 拦截 Fetch API (包含 SSE 流事件解析)
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
-        const response = await originalFetch.apply(this, args);
-
         const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
-        if (!url) return response;
-
         const method = args[1]?.method || 'GET';
+
+        debugLog('Fetch 请求:', method, url);
+
+        const response = await originalFetch.apply(this, args);
 
         // 检查 ChatGPT SSE 流
         const isConversationAPI = url.includes('/backend-api/f/conversation') ||
@@ -592,6 +676,22 @@
 
         GM_registerMenuCommand('🔔 测试通知', () => {
             showTestNotification();
+        });
+
+        GM_registerMenuCommand('🐛 调试模式 [' + (DEBUG_MODE ? '开' : '关') + ']', () => {
+            DEBUG_MODE = !DEBUG_MODE;
+            alert('调试模式已' + (DEBUG_MODE ? '开启\n\n请打开浏览器控制台(F12)查看调试日志' : '关闭'));
+            if (DEBUG_MODE) {
+                console.log('%c[AI-Notifier] 调试模式已开启', 'color: green; font-weight: bold; font-size: 14px');
+                console.log('当前平台配置:', PLATFORMS);
+                console.log('通知权限:', Notification.permission);
+                console.log('各平台启用状态:', {
+                    gemini: getSetting('geminiEnabled', true),
+                    chatgpt: getSetting('chatgptEnabled', true),
+                    chatgptReasoning: getSetting('chatgptReasoningEndEnabled', true),
+                    aistudio: getSetting('aistudioEnabled', true)
+                });
+            }
         });
     }
 
