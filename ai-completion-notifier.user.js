@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AI 回答完成提醒器 (Gemini & ChatGPT & AI Studio)
 // @namespace    http://tampermonkey.net/
-// @version      1.1.0
-// @description  当 Gemini、ChatGPT 或 AI Studio 完成回答生成时,发送桌面通知和声音提醒。支持 ChatGPT 思考完成检测。
+// @version      1.2.0
+// @description  当 Gemini、ChatGPT 或 AI Studio 完成回答生成时,发送桌面通知和声音提醒。支持 ChatGPT 思考完成检测。使用 GM_notification 无需手动授权。
 // @author       Your Name
 // @match        https://gemini.google.com/*
 // @match        https://chatgpt.com/*
@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_notification
 // @run-at       document-start
 // @connect      gemini.google.com
 // @connect      chatgpt.com
@@ -281,74 +282,42 @@
 
             const { title, message } = platform.notify;
 
-            // 请求通知权限
-            debugLog('检查通知权限:', Notification.permission);
-            if (Notification.permission === 'default') {
-                debugLog('请求通知权限...');
-                await Notification.requestPermission();
-                debugLog('通知权限请求结果:', Notification.permission);
-            }
+            debugLog(`✅ 发送 GM 通知: ${title} - ${message}`);
 
-            if (Notification.permission === 'granted') {
-                debugLog(`✅ 发送通知: ${title} - ${message}`);
-                const notification = new Notification(title, {
-                    body: message,
-                    icon: 'https://www.google.com/favicon.ico',
-                    tag: 'ai-completion-' + platform.id,
-                    requireInteraction: false,
-                    silent: false  // 使用系统通知声音
-                });
-
-                // 8秒后自动关闭
-                setTimeout(() => notification.close(), 8000);
-
-                notification.onclick = () => {
+            // 使用油猴的 GM_notification API
+            GM_notification({
+                title: title,
+                text: message,
+                image: 'https://www.google.com/favicon.ico',
+                timeout: 8000,  // 8秒后自动关闭
+                onclick: () => {
                     debugLog('通知被点击');
                     window.focus();
-                    notification.close();
-                };
-            } else {
-                debugError('通知权限被拒绝,无法发送通知');
-                console.error('[AI-Notifier] 通知权限被拒绝。请在油猴脚本设置中允许通知权限。');
-            }
+                }
+            });
         } catch (e) {
             debugError('发送通知失败:', e);
             console.error('[AI-Notifier] 发送通知失败:', e);
         }
     }
 
-    // 测试通知(带提示)
+    // 测试通知
     async function showTestNotification() {
         try {
             const message = '系统通知功能正常，您将听到系统通知声音';
 
-            // 请求通知权限
-            if (Notification.permission === 'default') {
-                await Notification.requestPermission();
-            }
-
-            if (Notification.permission === 'granted') {
-                const notification = new Notification('🔔 通知测试', {
-                    body: message,
-                    icon: 'https://www.google.com/favicon.ico',
-                    tag: 'ai-test-notification',
-                    requireInteraction: false,
-                    silent: false  // 使用系统通知声音
-                });
-
-                // 3秒后自动关闭
-                setTimeout(() => notification.close(), 3000);
-
-                notification.onclick = () => {
+            GM_notification({
+                title: '🔔 通知测试',
+                text: message,
+                image: 'https://www.google.com/favicon.ico',
+                timeout: 3000,  // 3秒后自动关闭
+                onclick: () => {
                     window.focus();
-                    notification.close();
-                };
-            } else if (Notification.permission === 'denied') {
-                alert('❌ 通知权限被拒绝\n\n请按以下步骤授权：\n\n1. 点击油猴图标\n2. 找到本脚本并点击\n3. 切换到「设置」标签\n4. 在「原始的连接匹配」下方找到通知权限\n5. 将通知权限设置为「允许」\n6. 刷新页面后重试');
-                return;
-            }
+                }
+            });
         } catch (e) {
             console.error('[AI-Notifier] 测试通知失败:', e);
+            alert('❌ 发送通知失败: ' + e.message);
         }
     }
 
@@ -606,22 +575,15 @@
                                     if (!isThrottled(chatgptPlatform.id, config.throttleMs, ':reasoning')) {
                                         const durationText = duration ? `(思考了 ${duration} 秒)` : '';
 
-                                        if (Notification.permission === 'granted') {
-                                            const notification = new Notification(config.notify.title, {
-                                                body: config.notify.message + durationText,
-                                                icon: 'https://www.google.com/favicon.ico',
-                                                tag: 'chatgpt-reasoning',
-                                                requireInteraction: false,
-                                                silent: false  // 使用系统通知声音
-                                            });
-
-                                            setTimeout(() => notification.close(), 8000);
-
-                                            notification.onclick = () => {
+                                        GM_notification({
+                                            title: config.notify.title,
+                                            text: config.notify.message + durationText,
+                                            image: 'https://www.google.com/favicon.ico',
+                                            timeout: 8000,
+                                            onclick: () => {
                                                 window.focus();
-                                                notification.close();
-                                            };
-                                        }
+                                            }
+                                        });
                                     }
                                 }
                             }
@@ -686,7 +648,7 @@
             if (DEBUG_MODE) {
                 console.log('%c[AI-Notifier] 调试模式已开启', 'color: green; font-weight: bold; font-size: 14px');
                 console.log('当前平台配置:', PLATFORMS);
-                console.log('通知权限:', Notification.permission);
+                console.log('使用 GM_notification API 发送通知 (无需额外权限)');
                 console.log('各平台启用状态:', {
                     gemini: getSetting('geminiEnabled', true),
                     chatgpt: getSetting('chatgptEnabled', true),
@@ -702,10 +664,7 @@
     // ===========================================
 
     function initialize() {
-        // 请求通知权限
-        if (Notification.permission === 'default') {
-            Notification.requestPermission();
-        }
+        // GM_notification 不需要提前请求权限,油猴会自动处理
 
         // 创建设置菜单
         createSettingsMenu();
