@@ -12,6 +12,7 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_notification
 // @grant        GM_getResourceURL
+// @grant        window.focus
 // @resource     notificationSound data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAADhAC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7v////////////////////////////////////////////////////////////////AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAA4SL6cqLAAAAAAD/+xDEAAPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/+xDEKQPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/+xDEUQPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/+xDEWQPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/+xDEYAPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 // @run-at       document-start
 // @connect      gemini.google.com
@@ -324,6 +325,53 @@
         }
     }
 
+    // 测试通知(带音量显示)
+    async function showTestNotification(volume) {
+        try {
+            const normalizedVolume = clampVolume(volume);
+            const percent = Math.round(normalizedVolume * 100);
+
+            let message = `正在播放测试音效，音量：${percent}%`;
+            if (normalizedVolume === 0) {
+                message = '音量已设为静音 (0%)';
+            } else if (Math.abs(normalizedVolume - MAX_VOLUME) < 0.001) {
+                message = `音量已设为最大 (${Math.round(MAX_VOLUME * 100)}%)`;
+            } else if (Math.abs(normalizedVolume - DEFAULT_VOLUME) < 0.001) {
+                message = `音量已设为默认值 (${Math.round(DEFAULT_VOLUME * 100)}%)`;
+            }
+
+            // 请求通知权限
+            if (Notification.permission === 'default') {
+                await Notification.requestPermission();
+            }
+
+            if (Notification.permission === 'granted') {
+                const notification = new Notification('🔊 音效测试', {
+                    body: message,
+                    icon: 'https://www.google.com/favicon.ico',
+                    tag: 'ai-test-notification',
+                    requireInteraction: false
+                });
+
+                // 3秒后自动关闭
+                setTimeout(() => notification.close(), 3000);
+
+                notification.onclick = () => {
+                    window.focus();
+                    notification.close();
+                };
+            } else if (Notification.permission === 'denied') {
+                alert('通知权限被拒绝，请在浏览器设置中允许通知权限');
+                return;
+            }
+
+            // 播放测试音效
+            playNotificationSound();
+        } catch (e) {
+            console.error('[AI-Notifier] 测试通知失败:', e);
+        }
+    }
+
     // ===========================================
     // 第八部分:XHR/Fetch 拦截
     // ===========================================
@@ -631,13 +679,15 @@
             if (input !== null) {
                 const newVolume = clampVolume(parseFloat(input) / 100);
                 setSetting('soundVolume', newVolume);
-                alert(`音量已设置为 ${Math.round(newVolume * 100)}%`);
-                playNotificationSound(); // 测试音效
+
+                // 显示测试通知
+                showTestNotification(newVolume);
             }
         });
 
         GM_registerMenuCommand('🎵 测试音效', () => {
-            playNotificationSound();
+            const volume = getSetting('soundVolume', DEFAULT_VOLUME);
+            showTestNotification(volume);
         });
     }
 
