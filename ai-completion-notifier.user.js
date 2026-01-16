@@ -10,10 +10,6 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
-// @grant        GM_notification
-// @grant        GM_getResourceURL
-// @grant        window.focus
-// @resource     notificationSound data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAADhAC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7v////////////////////////////////////////////////////////////////AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAA4SL6cqLAAAAAAD/+xDEAAPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/+xDEKQPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/+xDEUQPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/+xDEWQPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/+xDEYAPAAAGkAAAAIAAANIAAAARMQU1FMy4xMDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 // @run-at       document-start
 // @connect      gemini.google.com
 // @connect      chatgpt.com
@@ -104,16 +100,10 @@
     // 第二部分:常量与状态管理
     // ===========================================
 
-    const DEFAULT_VOLUME = 1;
-    const MAX_VOLUME = 1.5;
-
     // 状态存储
     const requestState = new Map();
     const lastNotifyAt = new Map();
     const lastStartAt = new Map();
-
-    // 音频元素
-    let audioElement = null;
 
     // ===========================================
     // 第三部分:工具函数
@@ -121,12 +111,6 @@
 
     function stateKey(platformId, tabId = 'main') {
         return `${platformId}:${tabId}`;
-    }
-
-    function clampVolume(value) {
-        const numeric = typeof value === 'number' ? value : parseFloat(value);
-        if (Number.isNaN(numeric)) return DEFAULT_VOLUME;
-        return Math.min(Math.max(numeric, 0), MAX_VOLUME);
     }
 
     function matchPath(pathname, pattern) {
@@ -235,59 +219,7 @@
     }
 
     // ===========================================
-    // 第六部分:音频播放
-    // ===========================================
-
-    function initAudio() {
-        if (audioElement) return;
-
-        // 创建简单的提示音 (440Hz beep)
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
-
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-
-        oscillator.frequency.value = 440;
-        oscillator.type = 'sine';
-
-        gainNode.gain.setValueAtTime(0, audioContext.currentTime);
-
-        audioElement = { audioContext, oscillator, gainNode };
-    }
-
-    function playNotificationSound() {
-        try {
-            const volume = clampVolume(getSetting('soundVolume', DEFAULT_VOLUME));
-            if (volume === 0) return;
-
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            const oscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
-
-            oscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-
-            oscillator.frequency.value = 880; // A5 音符
-            oscillator.type = 'sine';
-
-            const now = audioContext.currentTime;
-            gainNode.gain.setValueAtTime(0, now);
-            gainNode.gain.linearRampToValueAtTime(volume * 0.3, now + 0.01);
-            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
-
-            oscillator.start(now);
-            oscillator.stop(now + 0.3);
-
-            console.log('[AI-Notifier] 播放提示音,音量:', volume);
-        } catch (error) {
-            console.error('[AI-Notifier] 播放音频失败:', error);
-        }
-    }
-
-    // ===========================================
-    // 第七部分:通知系统
+    // 第六部分:通知系统
     // ===========================================
 
     async function sendNotification(platform, options = {}) {
@@ -307,7 +239,8 @@
                     body: message,
                     icon: 'https://www.google.com/favicon.ico',
                     tag: 'ai-completion-' + platform.id,
-                    requireInteraction: false
+                    requireInteraction: false,
+                    silent: false  // 使用系统通知声音
                 });
 
                 // 8秒后自动关闭
@@ -318,27 +251,15 @@
                     notification.close();
                 };
             }
-
-            playNotificationSound();
         } catch (e) {
             console.error('[AI-Notifier] 发送通知失败:', e);
         }
     }
 
-    // 测试通知(带音量显示)
-    async function showTestNotification(volume) {
+    // 测试通知(带提示)
+    async function showTestNotification() {
         try {
-            const normalizedVolume = clampVolume(volume);
-            const percent = Math.round(normalizedVolume * 100);
-
-            let message = `正在播放测试音效，音量：${percent}%`;
-            if (normalizedVolume === 0) {
-                message = '音量已设为静音 (0%)';
-            } else if (Math.abs(normalizedVolume - MAX_VOLUME) < 0.001) {
-                message = `音量已设为最大 (${Math.round(MAX_VOLUME * 100)}%)`;
-            } else if (Math.abs(normalizedVolume - DEFAULT_VOLUME) < 0.001) {
-                message = `音量已设为默认值 (${Math.round(DEFAULT_VOLUME * 100)}%)`;
-            }
+            const message = '系统通知功能正常，您将听到系统通知声音';
 
             // 请求通知权限
             if (Notification.permission === 'default') {
@@ -346,11 +267,12 @@
             }
 
             if (Notification.permission === 'granted') {
-                const notification = new Notification('🔊 音效测试', {
+                const notification = new Notification('🔔 通知测试', {
                     body: message,
                     icon: 'https://www.google.com/favicon.ico',
                     tag: 'ai-test-notification',
-                    requireInteraction: false
+                    requireInteraction: false,
+                    silent: false  // 使用系统通知声音
                 });
 
                 // 3秒后自动关闭
@@ -364,9 +286,6 @@
                 alert('通知权限被拒绝，请在浏览器设置中允许通知权限');
                 return;
             }
-
-            // 播放测试音效
-            playNotificationSound();
         } catch (e) {
             console.error('[AI-Notifier] 测试通知失败:', e);
         }
@@ -607,7 +526,8 @@
                                                 body: config.notify.message + durationText,
                                                 icon: 'https://www.google.com/favicon.ico',
                                                 tag: 'chatgpt-reasoning',
-                                                requireInteraction: false
+                                                requireInteraction: false,
+                                                silent: false  // 使用系统通知声音
                                             });
 
                                             setTimeout(() => notification.close(), 8000);
@@ -617,8 +537,6 @@
                                                 notification.close();
                                             };
                                         }
-
-                                        playNotificationSound();
                                     }
                                 }
                             }
@@ -672,22 +590,8 @@
             location.reload();
         });
 
-        GM_registerMenuCommand('🔊 设置音量', () => {
-            const current = getSetting('soundVolume', DEFAULT_VOLUME);
-            const percent = Math.round(current * 100);
-            const input = prompt(`请输入音量 (0-${Math.round(MAX_VOLUME * 100)}%):`, percent);
-            if (input !== null) {
-                const newVolume = clampVolume(parseFloat(input) / 100);
-                setSetting('soundVolume', newVolume);
-
-                // 显示测试通知
-                showTestNotification(newVolume);
-            }
-        });
-
-        GM_registerMenuCommand('🎵 测试音效', () => {
-            const volume = getSetting('soundVolume', DEFAULT_VOLUME);
-            showTestNotification(volume);
+        GM_registerMenuCommand('🔔 测试通知', () => {
+            showTestNotification();
         });
     }
 
